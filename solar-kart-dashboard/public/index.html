@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solar kart telemetry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --track: #eef0ea;
+    --panel: #ffffff;
+    --asphalt: #1f2427;
+    --muted: #66706f;
+    --line: #d8dcd3;
+    --sun: #f0a800;
+    --cell: #0b7a75;
+    --hot: #cf3f27;
+    --speed: #2f5fd0;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --track: #14181a; --panel: #1d2326; --asphalt: #eef0ea; --muted: #9aa5a3; --line: #323b3e;
+      --sun: #ffc233; --cell: #38b6ad; --hot: #ff7a5c; --speed: #7ea2ff;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--track); color: var(--asphalt);
+    font-family: 'Barlow', system-ui, sans-serif; line-height: 1.4;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 18px clamp(16px, 4vw, 40px);
+  }
+  h1 { margin: 0; font: 700 1.6rem 'Barlow Condensed', sans-serif; letter-spacing: .01em; }
+  .tools { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: .95rem; }
+  .status { display: inline-flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .status.live .dot { background: var(--cell); box-shadow: 0 0 0 4px color-mix(in srgb, var(--cell) 25%, transparent); }
+  .status.stale .dot { background: var(--sun); }
+  a.btn { color: var(--asphalt); border: 1px solid var(--line); padding: 6px 12px; border-radius: 6px; text-decoration: none; }
+  a.btn:hover, a.btn:focus-visible { border-color: var(--asphalt); outline: none; }
+
+  main { padding: 0 clamp(16px, 4vw, 40px) 40px; display: grid; gap: 16px; }
+  .readouts { display: grid; grid-template-columns: 1.6fr repeat(3, 1fr); gap: 16px; }
+  .readout { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; }
+  .readout.speed { grid-row: span 1; border-left: 8px solid var(--speed); }
+  .readout h2 { margin: 0; font-size: 1rem; font-weight: 500; color: var(--muted); }
+  .num { font: 700 clamp(3rem, 7vw, 5.5rem)/1 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
+  .readout:not(.speed) .num { font-size: clamp(2.4rem, 4.4vw, 3.6rem); }
+  .unit { font: 500 1.1rem 'Barlow Condensed', sans-serif; color: var(--muted); margin-left: 6px; }
+  .sub { color: var(--muted); font-size: .9rem; margin-top: 6px; }
+  .soc { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin-top: 10px; }
+  .soc > i { display: block; height: 100%; width: 0; background: var(--cell); transition: width .4s; }
+  .soc > i.low { background: var(--hot); }
+  .hot { color: var(--hot); }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .chart { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px 10px; }
+  .chart h3 { margin: 0 0 6px; font: 700 1.1rem 'Barlow Condensed', sans-serif; }
+  .chart canvas { width: 100%; height: 230px !important; }
+
+  @media (max-width: 900px) {
+    .readouts { grid-template-columns: 1fr 1fr; }
+    .readout.speed { grid-column: span 2; }
+    .charts { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { .soc > i { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Solar kart telemetry</h1>
+  <div class="tools">
+    <span id="status" class="status"><span class="dot"></span><span id="statusText">Connecting</span></span>
+    <a class="btn" href="/api/export.csv">Download run as CSV</a>
+  </div>
+</header>
+
+<main>
+  <section class="readouts" aria-label="Current readings">
+    <div class="readout speed">
+      <h2>Speed</h2>
+      <div><span class="num" id="rSpeed">--</span><span class="unit">km/h</span></div>
+      <div class="sub">Peak this session: <span id="rPeak">--</span> km/h</div>
+    </div>
+    <div class="readout">
+      <h2>Pack voltage</h2>
+      <div><span class="num" id="rVolt">--</span><span class="unit">V</span></div>
+      <div class="soc"><i id="socBar"></i></div>
+      <div class="sub">About <span id="rSoc">--</span>% charge</div>
+    </div>
+    <div class="readout">
+      <h2>Motor current</h2>
+      <div><span class="num" id="rAmp">--</span><span class="unit">A</span></div>
+      <div class="sub"><span id="rWatt">--</span> W drawn</div>
+    </div>
+    <div class="readout">
+      <h2>Temperature</h2>
+      <div><span class="num" id="rTemp">--</span><span class="unit">&deg;C</span></div>
+      <div class="sub" id="tempNote">Within normal range</div>
+    </div>
+  </section>
+
+  <section class="charts" aria-label="History charts">
+    <div class="chart"><h3>Speed</h3><canvas id="cSpeed"></canvas></div>
+    <div class="chart"><h3>Voltage and current</h3><canvas id="cPower"></canvas></div>
+    <div class="chart"><h3>Power draw</h3><canvas id="cWatt"></canvas></div>
+    <div class="chart"><h3>Temperature</h3><canvas id="cTemp"></canvas></div>
+  </section>
+</main>
+
+<script>
+const WINDOW = 240;               // points on screen (~2 min at 2 Hz)
+const TEMP_WARN = 70;             // deg C, edit to suit your motor/battery
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const $ = (id) => document.getElementById(id);
+
+function makeChart(canvasId, datasets, opts = {}) {
+  return new Chart($(canvasId), {
+    type: 'line',
+    data: { labels: [], datasets: datasets.map((d) => ({
+      data: [], borderColor: css(d.color), backgroundColor: 'transparent',
+      borderWidth: 2, pointRadius: 0, tension: .25, label: d.label, yAxisID: d.axis || 'y',
+    })) },
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: datasets.length > 1, labels: { color: css('--muted'), boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: css('--muted'), maxTicksLimit: 6 }, grid: { color: css('--line') } },
+        y: { position: 'left', ticks: { color: css('--muted') }, grid: { color: css('--line') }, ...(opts.y || {}) },
+        ...(opts.y2 ? { y2: { position: 'right', ticks: { color: css('--muted') }, grid: { drawOnChartArea: false }, ...opts.y2 } } : {}),
+      },
+    },
+  });
+}
+
+const charts = {
+  speed: makeChart('cSpeed', [{ label: 'km/h', color: '--speed' }], { y: { min: 0 } }),
+  power: makeChart('cPower', [
+    { label: 'Volts', color: '--cell' },
+    { label: 'Amps', color: '--sun', axis: 'y2' },
+  ], { y2: { min: 0 } }),
+  watt: makeChart('cWatt', [{ label: 'Watts', color: '--sun' }], { y: { min: 0 } }),
+  temp: makeChart('cTemp', [{ label: '\u00b0C', color: '--hot' }]),
+};
+
+let peak = 0, lastMsg = 0;
+
+function push(chart, label, ...values) {
+  chart.data.labels.push(label);
+  values.forEach((v, i) => chart.data.datasets[i].data.push(v));
+  if (chart.data.labels.length > WINDOW) {
+    chart.data.labels.shift();
+    chart.data.datasets.forEach((d) => d.data.shift());
+  }
+}
+
+function render(s, redraw = true) {
+  const label = new Date(s.ts).toLocaleTimeString([], { hour12: false });
+  push(charts.speed, label, s.spd);
+  push(charts.power, label, s.v, s.i);
+  push(charts.watt, label, s.p);
+  push(charts.temp, label, s.temp);
+  if (redraw) Object.values(charts).forEach((c) => c.update('none'));
+
+  peak = Math.max(peak, s.spd);
+  $('rSpeed').textContent = s.spd.toFixed(1);
+  $('rPeak').textContent = peak.toFixed(1);
+  $('rVolt').textContent = s.v.toFixed(1);
+  $('rAmp').textContent = s.i.toFixed(1);
+  $('rWatt').textContent = Math.round(s.p);
+  $('rTemp').textContent = s.temp.toFixed(1);
+  $('rSoc').textContent = s.soc;
+  const bar = $('socBar');
+  bar.style.width = s.soc + '%';
+  bar.classList.toggle('low', s.soc < 20);
+  const hot = s.temp >= TEMP_WARN;
+  $('rTemp').classList.toggle('hot', hot);
+  $('tempNote').textContent = hot ? 'Over ' + TEMP_WARN + ' \u00b0C: ease off' : 'Within normal range';
+}
+
+function setStatus(kind, text) {
+  $('status').className = 'status ' + kind;
+  $('statusText').textContent = text;
+}
+
+async function loadHistory() {
+  try {
+    const { samples } = await (await fetch('/api/history')).json();
+    samples.slice(-WINDOW).forEach((s) => render(s, false));
+    Object.values(charts).forEach((c) => c.update('none'));
+  } catch { /* server not reachable yet */ }
+}
+
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/live');
+  ws.onopen = () => setStatus('stale', 'Waiting for kart');
+  ws.onmessage = (e) => { lastMsg = Date.now(); setStatus('live', 'Live'); render(JSON.parse(e.data)); };
+  ws.onclose = () => { setStatus('', 'Disconnected, retrying'); setTimeout(connect, 2000); };
+}
+
+setInterval(() => {
+  if (lastMsg && Date.now() - lastMsg > 4000) setStatus('stale', 'No data from kart');
+}, 1000);
+
+loadHistory().then(connect);
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "solar-kart-dashboard",
+  "version": "1.0.0",
+  "description": "Real-time battery and motor telemetry from a solar go-kart (ESP32) to a live web dashboard.",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "simulate": "SIMULATE=1 node server/server.js",
+    "test": "node --test server/telemetry.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": { "node": ">=18" }
+}
